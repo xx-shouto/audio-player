@@ -5,6 +5,7 @@ from textual.app import App
 from textual.widgets import Static, ListView, ListItem
 from textual.screen import Screen
 from textual.containers import Horizontal
+import subprocess
 
 MUSIC_DIR = "music"
 
@@ -186,17 +187,20 @@ class SettingsScreen(Screen):
         with Horizontal():
             self.sidebar = create_sidebar()
             yield self.sidebar
+
             self.settings_list = ListView()
             yield self.settings_list
 
     def on_mount(self):
         self.settings_list.clear()
-        self.settings_list.append(StringListItem("Bluetooth"))
+        self.settings_list.append(StringListItem("Audio"))  # Bluetooth → Audio
         self.settings_list.append(StringListItem("Other Setting"))
         self.set_focus(self.sidebar)
 
     async def on_key(self, event):
         key = event.key
+
+        # サイドバー選択
         if self.focused is self.sidebar and key == "enter":
             choice = self.sidebar.children[self.sidebar.index].item_name
             if choice == "Home":
@@ -205,11 +209,104 @@ class SettingsScreen(Screen):
                 await self.app.push_screen(PlaylistListScreen())
             elif choice == "Exit":
                 await self.app.push_screen(ExitConfirmScreen())
+
+        # 右キーで設定リストに移動
         elif key == "right" and self.focused is self.sidebar:
             self.set_focus(self.settings_list)
+
+        # 左キーでサイドバーに戻る
         elif key == "left" and self.focused is self.settings_list:
             self.set_focus(self.sidebar)
 
+        # 設定リスト操作
+        elif self.focused is self.settings_list and key == "enter":
+            setting = self.settings_list.children[self.settings_list.index].item_name
+            if setting == "Audio":
+                await self.select_audio_device()
+
+    async def select_audio_device(self):
+        # ---------------------------
+        # 1. Bluetooth デバイス一覧取得
+        # ---------------------------
+        result = subprocess.run(["bluetoothctl", "devices"], capture_output=True, text=True)
+        lines = result.stdout.strip().splitlines()
+
+        if not lines:
+            self.settings_list.append(StringListItem("Bluetooth デバイスが見つかりません"))
+            return
+
+        self.settings_list.clear()
+        self.audio_devices = []
+        for i, line in enumerate(lines):
+            parts = line.split(" ", 2)
+            mac = parts[1]
+            name = parts[2] if len(parts) > 2 else "Unknown"
+            self.audio_devices.append((mac, name))
+            self.settings_list.append(StringListItem(f"{i}: {name} ({mac})"))
+
+        self.set_focus(self.settings_list)
+
+        async def device_select(event):
+            if event.key != "enter":
+                return
+            idx = self.settings_list.index
+            mac, name = self.audio_devices[idx]
+
+            # ---------------------------
+            # 2. ペアリング・接続
+            # ---------------------------
+            subprocess.run(["bluetoothctl"], input=f"pair {mac}\ntrust {mac}\nconnect {mac}\nexit\n", text=True)
+            self.settings_list.append(StringListItem(f"{name} に接続完了！"))
+
+            # ---------------------------
+            # 3. PulseAudio 出力デバイス一覧取得
+            # ---------------------------
+            pa_result = subprocess.run(["pactl", "list", "short", "sinks"], capture_output=True, text=True)
+            pa_lines = pa_result.stdout.strip().splitlines()
+            bt_lines = [l for l in pa_lines if "bluez_sink" in l]
+
+            if not bt_lines:
+                self.settings_list.append(StringListItem("Bluetooth 出力デバイスが見つかりません"))
+                return
+
+            self.settings_list.clear()
+            self.pa_devices = []
+            for line in bt_lines:
+                parts = line.split("\t")
+                idx = parts[0]
+                name = parts[1]
+                self.pa_devices.append((idx, name))
+                self.settings_list.append(StringListItem(f"{idx}: {name}"))
+
+            self.set_focus(self.settings_list)
+
+            async def pa_select(event2):
+                if event2.key != "enter":
+                    return
+                sel_idx = self.settings_list.index
+                dev_idx, dev_name = self.pa_devices[sel_idx]
+
+                # 音量入力
+                self.settings_list.clear()
+                self.settings_list.append(StringListItem("音量(%)を入力して Enter:"))
+
+                async def volume_input(event3):
+                    if event3.key != "enter":
+                        return
+                    # ここで Textual の Input ではなく簡易プロンプトとして ListItem を読む
+                    # 実際は Textual InputWidget に置き換えるともっと良い
+                    vol_item = self.settings_list.children[0]
+                    vol_str = vol_item.renderable.render()
+                    if not vol_str.endswith("%"):
+                        vol_str += "%"
+                    subprocess.run(["pactl", "set-sink-volume", dev_idx, vol_str])
+                    self.settings_list.append(StringListItem(f"{dev_name} の音量を {vol_str} に設定しました！"))
+
+                self.settings_list.on_key = volume_input
+
+            self.settings_list.on_key = pa_select
+
+        self.settings_list.on_key = device_select
 
 # ------------------------
 # PlaylistListScreen
