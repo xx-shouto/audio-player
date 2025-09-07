@@ -55,7 +55,19 @@ class HomeScreen(Screen):
         self.load_playlist()
         self.set_focus(self.list_view)
         self.set_interval(0.5, self.update_download_status)
+        # プレイヤーの終了コールバックをセット
+        self.app.player.on_end_callback = self.on_track_end
 
+    async def on_track_end(self):
+        # 曲終了時に次の曲を再生
+        current_index = self.list_view.index
+        next_index = (current_index + 1) % len(self.list_view.children)
+        self.list_view.index = next_index
+        next_song = self.list_view.children[next_index].item_name
+        self.app.player.load_track(os.path.join(MUSIC_DIR, next_song))
+        self.app.player.play()
+
+        
     def load_playlist(self):
         files = os.listdir(MUSIC_DIR)
         files.sort()
