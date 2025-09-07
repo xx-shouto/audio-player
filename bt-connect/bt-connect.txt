@@ -1,0 +1,46 @@
+bt_connect.shの使い方
+
+スクリプトに実行権限を付与：
+
+chmod +x full_bt_connect.sh
+
+
+実行：
+
+sudo ./full_bt_connect.sh
+
+
+スキャン結果から矢印キーでイヤホンを選択 → Enter
+
+確認 y を押すと接続開始
+
+--
+
+初回でもパッケージが自動で入るので、事前準備不要
+
+fzfで選択可能 → MACアドレスの手入力不要
+
+A2DP設定まで自動
+
+--
+disconnect_bt.shの使い方
+
+スクリプトに実行権限を付与：
+
+chmod +x disconnect_bt.sh
+
+
+実行：
+
+sudo ./disconnect_bt.sh
+
+
+接続中デバイス一覧がfzfで表示される → 矢印キーで選択 → Enter
+
+確認 y で切断開始
+
+💡 ポイント
+
+接続解除だけでなく、PulseAudioも再起動して音声ルーティングを元に戻す
+
+複数デバイス接続中でも、fzfで選択すれば簡単に切断可能
