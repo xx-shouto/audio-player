@@ -1,13 +1,59 @@
+# main.py
 from textual.app import App
 from textual.widgets import Static, ListView, ListItem
 from textual.screen import Screen
 from textual.containers import Horizontal
 import asyncio
 import os
-from player import MusicPlayer
-from web import download_status  # WebUIと共有するグローバル変数
+import pygame
 
 MUSIC_DIR = "music"
+
+# ------------------------
+# MusicPlayer クラス（Pause誤判定修正版）
+# ------------------------
+class MusicPlayer:
+    def __init__(self):
+        pygame.mixer.init()
+        self.current_track = None
+        self.on_end_callback = None
+        self._paused = False   # Pause状態フラグ
+
+    def load_track(self, path: str):
+        self.current_track = path
+        pygame.mixer.music.load(path)
+        self._paused = False
+
+    def play(self):
+        if self.current_track:
+            if self._paused:
+                pygame.mixer.music.unpause()
+                self._paused = False
+            else:
+                pygame.mixer.music.play()
+            asyncio.create_task(self._monitor_end())
+
+    def pause(self):
+        pygame.mixer.music.pause()
+        self._paused = True
+
+    def stop(self):
+        pygame.mixer.music.stop()
+        self._paused = False
+
+    def is_playing(self):
+        return pygame.mixer.music.get_busy()
+
+    async def _monitor_end(self):
+        """
+        曲が完全に終了した場合のみ on_end_callback を呼ぶ
+        """
+        while self.is_playing() or self._paused:
+            await asyncio.sleep(0.5)
+
+        # 曲が終了していて paused 状態でない場合のみコールバック
+        if not self._paused and self.on_end_callback:
+            await self.on_end_callback()
 
 # ------------------------
 # ListItem に文字列を保持するクラス
@@ -18,7 +64,7 @@ class StringListItem(ListItem):
         self.item_name = text
 
 # ------------------------
-# サイドバー生成関数（各スクリーン用に独立）
+# サイドバー生成関数
 # ------------------------
 def create_sidebar():
     sidebar = ListView(
@@ -31,7 +77,7 @@ def create_sidebar():
     return sidebar
 
 # ------------------------
-# Screens
+# HomeScreen
 # ------------------------
 class HomeScreen(Screen):
     def compose(self):
@@ -54,12 +100,13 @@ class HomeScreen(Screen):
     def on_mount(self):
         self.load_playlist()
         self.set_focus(self.list_view)
-        self.set_interval(0.5, self.update_download_status)
-        # プレイヤーの終了コールバックをセット
+        # 曲終了コールバックをセット
         self.app.player.on_end_callback = self.on_track_end
 
     async def on_track_end(self):
         # 曲終了時に次の曲を再生
+        if not self.list_view.children:
+            return
         current_index = self.list_view.index
         next_index = (current_index + 1) % len(self.list_view.children)
         self.list_view.index = next_index
@@ -67,39 +114,14 @@ class HomeScreen(Screen):
         self.app.player.load_track(os.path.join(MUSIC_DIR, next_song))
         self.app.player.play()
 
-        
     def load_playlist(self):
-        files = os.listdir(MUSIC_DIR)
+        files = [f for f in os.listdir(MUSIC_DIR) if f.endswith(".mp3")]
         files.sort()
         self.list_view.clear()
         for f in files:
             self.list_view.append(StringListItem(f))
         if self.list_view.children:
             self.list_view.index = 0
-
-    async def update_download_status(self):
-        status = download_status.get("status", "idle")
-        title = download_status.get("title", "")
-
-        if status == "downloading":
-            if not any(title in item.item_name for item in self.list_view.children):
-                self.list_view.append(StringListItem(f"{title} Downloading…"))
-            else:
-                for item in self.list_view.children:
-                    if title in item.item_name:
-                        item.query_one(Static).update(f"{title} Downloading…")
-                        item.item_name = f"{title} Downloading…"
-        elif status == "complete":
-            for item in self.list_view.children:
-                if title in item.item_name:
-                    item.query_one(Static).update(f"{title} Download Complete!")
-                    item.item_name = f"{title} Download Complete!"
-            await asyncio.sleep(3)
-            for item in self.list_view.children:
-                if title in item.item_name:
-                    item.query_one(Static).update(title)
-                    item.item_name = title
-            download_status["status"] = "idle"
 
     async def on_key(self, event):
         key = event.key
@@ -150,80 +172,7 @@ class HomeScreen(Screen):
             self.load_playlist()
 
 # ------------------------
-# PlaylistSongsScreen（プレイリスト曲表示）
-# ------------------------
-class PlaylistSongsScreen(Screen):
-    def __init__(self, playlist_name: str):
-        super().__init__()
-        self.playlist_name = playlist_name
-
-    def compose(self):
-        with Horizontal():
-            self.sidebar = create_sidebar()
-            yield self.sidebar
-
-            self.list_view = ListView()
-            yield self.list_view
-
-            self.action_list = ListView(
-                StringListItem("Play"),
-                StringListItem("Pause"),
-                StringListItem("Next"),
-                StringListItem("Prev"),
-            )
-            self.action_list.visible = False
-            yield self.action_list
-
-    def on_mount(self):
-        self.list_view.clear()
-        self.list_view.append(StringListItem(f"Song1 ({self.playlist_name})"))
-        self.list_view.append(StringListItem(f"Song2 ({self.playlist_name})"))
-        self.list_view.index = 0
-        self.set_focus(self.list_view)
-
-    async def on_key(self, event):
-        key = event.key
-
-        if self.focused is self.list_view and key == "enter":
-            self.action_list.visible = True
-            self.set_focus(self.action_list)
-
-        elif self.focused is self.action_list and key == "enter":
-            action = self.action_list.children[self.action_list.index].item_name
-            current_index = self.list_view.index
-            song_name = self.list_view.children[current_index].item_name
-            song_path = os.path.join(MUSIC_DIR, song_name)
-
-            if action == "Play":
-                self.app.player.load_track(song_path)
-                self.app.player.play()
-            elif action == "Pause":
-                self.app.player.pause()
-            elif action == "Next":
-                next_index = (current_index + 1) % len(self.list_view.children)
-                self.list_view.index = next_index
-                next_song = self.list_view.children[next_index].item_name
-                self.app.player.load_track(os.path.join(MUSIC_DIR, next_song))
-                self.app.player.play()
-            elif action == "Prev":
-                prev_index = (current_index - 1) % len(self.list_view.children)
-                self.list_view.index = prev_index
-                prev_song = self.list_view.children[prev_index].item_name
-                self.app.player.load_track(os.path.join(MUSIC_DIR, prev_song))
-                self.app.player.play()
-
-        # 左矢印でフォーカス遷移
-        if key == "left":
-            if self.focused is self.action_list:
-                self.set_focus(self.list_view)
-            elif self.focused is self.list_view:
-                self.set_focus(self.sidebar)
-
-        elif key == "right" and self.list_view.children:
-            self.set_focus(self.list_view)
-
-# ------------------------
-# 他のスクリーン
+# SettingsScreen
 # ------------------------
 class SettingsScreen(Screen):
     def compose(self):
@@ -238,6 +187,9 @@ class SettingsScreen(Screen):
         self.settings_list.append(StringListItem("Bluetooth"))
         self.settings_list.append(StringListItem("Other Setting"))
 
+# ------------------------
+# PlaylistListScreen
+# ------------------------
 class PlaylistListScreen(Screen):
     def compose(self):
         with Horizontal():
@@ -253,9 +205,11 @@ class PlaylistListScreen(Screen):
 
     async def on_key(self, event):
         if event.key == "enter" and self.focused is self.playlist_list:
-            playlist_name = self.playlist_list.children[self.playlist_list.index].item_name
-            await self.app.push_screen(PlaylistSongsScreen(playlist_name))
+            await self.app.push_screen(HomeScreen())  # 簡略化
 
+# ------------------------
+# ExitConfirmScreen
+# ------------------------
 class ExitConfirmScreen(Screen):
     def compose(self):
         self.list_view = ListView(
@@ -284,9 +238,7 @@ class SidebarApp(App):
     BINDINGS = [("q", "quit", "Quit")]
 
     def on_mount(self):
-        # プレイヤー初期化
         self.player = MusicPlayer()
-        # 最初に HomeScreen を表示
         self.push_screen(HomeScreen())
 
 if __name__ == "__main__":
