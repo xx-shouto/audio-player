@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Audio Player WebUI</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h2 { margin-top: 30px; }
+        .playlist, .songs { margin-top: 10px; }
+        input[type=text], input[type=file] { margin-right: 10px; }
+        button { margin-right: 10px; }
+    </style>
+</head>
+<body>
+
+<h1>Audio Player WebUI</h1>
+
+<h2>Upload Music File</h2>
+<form action="/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <button type="submit">Upload</button>
+</form>
+
+<h2>Download from YouTube</h2>
+<form action="/youtube" method="post">
+    <input type="text" name="url" placeholder="YouTube URL" required>
+    <button type="submit">Download</button>
+</form>
+
+<p>Status: {{ status.title }}</p>
+
+<h2>Playlists</h2>
+<div class="playlist">
+    <form action="/playlist_create" method="post">
+        <input type="text" name="name" placeholder="New Playlist Name" required>
+        <button type="submit">Create Playlist</button>
+    </form>
+
+    <ul>
+        {% for pl in playlists %}
+            <li>{{ pl }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<h2>Add Song to Playlist</h2>
+<div class="songs">
+    <form action="/playlist_add_song" method="post">
+        <select name="playlist" required>
+            {% for pl in playlists %}
+                <option value="{{ pl }}">{{ pl }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="filename" placeholder="Song Filename" required>
+        <button type="submit">Add Song</button>
+    </form>
+</div>
+
+</body>
+</html>

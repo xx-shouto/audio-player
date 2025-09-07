@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+jinja2
+textual
+python-vlc
+yt-dlp
+sqlalchemy
+rich
+python-multipart
